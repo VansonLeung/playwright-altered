@@ -109,7 +109,7 @@ function parseArgs(argv, now = new Date()) {
 }
 
 function buildFinancialQueries({ sector, market, horizon }) {
-  const scope = `"${sector}" "${market}" "${horizon}"`;
+  const scope = `${sector} ${market} ${horizon}`;
 
   return [
     {
