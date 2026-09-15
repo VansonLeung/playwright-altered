@@ -126,7 +126,7 @@ function buildFinancialQueries({ sector, market, horizon }) {
     },
     {
       category: '產業數據與專業研報',
-      query: `${scope} ("industry outlook" OR 產業展望 OR 產業趨勢) (CAGR OR revenue OR margin OR 利潤率) filetype:pdf`,
+      query: `${scope} ("industry outlook" OR 產業展望 OR 產業趨勢) (CAGR OR revenue OR margin OR 利潤率)`,
     },
     {
       category: '下行風險（潛在劣勢）',
