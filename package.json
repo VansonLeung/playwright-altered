@@ -1,13 +1,20 @@
 {
   "name": "playwright-altered",
   "version": "1.0.0",
-  "description": "",
+  "description": "Fetch industry outlook search results and Google AI Overviews for daily reports",
   "license": "ISC",
   "author": "",
   "type": "commonjs",
   "main": "t1.js",
+  "bin": {
+    "financial_sector_forecast_fetch": "t2.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test",
+    "forecast": "node t2.js"
   },
   "dependencies": {
     "patchright": "^1.62.3"
