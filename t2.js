@@ -161,151 +161,164 @@ function cleanResultUrl(url, engine) {
   }
 }
 
-async function extractGoogleAiOverview(page, maxWaitMs) {
-  // Google does not publish a stable DOM API for AI Overviews. Locate the
-  // feature by its visible heading so this works across changing CSS classes.
-  const labels = [
-    'AI Overview',
-    'AI overview',
-    'AI 摘要',
-    'AI 概覽',
-    'AI 生成的摘要',
-    'AI 產生的摘要',
-  ];
+// Runs in the page. Keep scope, expansion controls, and text extraction together
+// so an unrelated source-card button cannot mark the passage as expanded.
+function inspectGoogleOverview(expectedLabels) {
+  const normalize = (value) => value?.replace(/\s+/g, ' ').trim() || '';
+  const isLabel = (text) => expectedLabels.some((label) =>
+    text === label || (text.startsWith(`${label} `) && text.length < label.length + 40)
+  );
+  const visible = (element) => {
+    const style = getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden' &&
+      element.getClientRects().length > 0;
+  };
+  const label = Array.from(document.querySelectorAll(
+    'h1, h2, h3, [role="heading"], div, span'
+  )).find((element) => visible(element) && isLabel(normalize(element.textContent)));
+  if (!label) return null;
 
-  if (maxWaitMs === 0) return null;
+  // Include siblings of the initial preview, but stop before ordinary results.
+  let root = null;
+  for (let parent = label.parentElement, level = 0;
+    parent && level < 12; parent = parent.parentElement, level += 1) {
+    if (['search', 'rso'].includes(parent.id) || ['BODY', 'HTML', 'MAIN'].includes(parent.tagName)) break;
+    const organic = Array.from(parent.querySelectorAll('a h3, h3 a'))
+      .some((heading) => !isLabel(normalize(heading.textContent)));
+    if (organic) break;
+    if (visible(parent) && normalize(parent.innerText).length > normalize(label.innerText).length) root = parent;
+    if (root && parent.matches('section, article, [role="region"]')) break;
+  }
+  if (!root) return null;
 
-  const startedAt = Date.now();
-  const deadline = startedAt + maxWaitMs;
-  const headingFound = await page.waitForFunction(
-    (expectedLabels) => {
-      const elements = document.querySelectorAll('h1, h2, h3, [role="heading"], div, span');
-      return Array.from(elements).some((element) => {
-        const text = element.textContent?.replace(/\s+/g, ' ').trim();
-        return expectedLabels.some((label) =>
-          text === label || (text?.startsWith(`${label} `) && text.length < label.length + 40)
-        );
-      });
-    },
-    labels,
-    { timeout: maxWaitMs }
-  ).catch(() => null);
+  // The live Google layout separates generated prose (main-col) from source
+  // cards (rhs-col). Reading their shared ancestor mixes both into the answer.
+  const passage = Array.from(root.querySelectorAll('[data-container-id="main-col"]'))
+    .find(visible) || root;
+  const sourceRoot = passage.closest('[data-subtree="aimc"]') || root;
 
-  if (!headingFound) return null;
-
-  const tryExpand = () => page.evaluate((expectedLabels) => {
-    const normalize = (value) => value?.replace(/\s+/g, ' ').trim() || '';
-    const isLabel = (text) => expectedLabels.some((label) =>
-      text === label || (text.startsWith(`${label} `) && text.length < label.length + 40)
-    );
-    const labels = Array.from(
-      document.querySelectorAll('h1, h2, h3, [role="heading"], div, span')
-    );
-    const label = labels.find((element) => isLabel(normalize(element.textContent)));
-    if (!label) return false;
-
-    let container = label;
-    for (let level = 0; container && level < 8; level += 1) {
-      const button = Array.from(container.querySelectorAll('button, [role="button"]')).find(
-        (element) => /^(show more|more|顯示更多|更多)$/i.test(
-          normalize(element.getAttribute('aria-label')) || normalize(element.innerText)
-        )
-      );
-      if (button) {
-        button.click();
-        return true;
-      }
-      container = container.parentElement;
+  const controlSelector = 'button, [role="button"], a[aria-expanded], [tabindex][aria-expanded]';
+  const allControls = Array.from(document.querySelectorAll(controlSelector));
+  const explicitExpand = /^(show (?:more|all)|read more|expand|顯示(?:更多|全部|所有內容)|显示(?:更多|全部|所有内容)|展開(?:全部|更多)?|展开(?:全部|更多)?)(?:\s+(?:more|更多))?$/i;
+  const sourceArea = (element) => {
+    for (let parent = element; parent && parent !== root; parent = parent.parentElement) {
+      if (parent.matches('aside, nav, [role="complementary"], [data-container-id="rhs-col"], [data-src-id]') ||
+          /sources|citations|引用來源|資料來源|参考资料/i.test(parent.getAttribute('aria-label') || '')) return true;
     }
     return false;
-    }, labels);
+  };
+  const expandButton = allControls.find((element) => {
+    if (!root.contains(element) || !visible(element) || sourceArea(element) ||
+        element.getAttribute('aria-expanded') === 'true') return false;
+    const names = [normalize(element.getAttribute('aria-label')), normalize(element.innerText)];
+    if (names.some((name) => explicitExpand.test(name))) return true;
+    // A bare "更多" is often a source/menu button. Only accept it when it
+    // explicitly controls a passage inside this overview.
+    const targets = (element.getAttribute('aria-controls') || '').split(/\s+/)
+      .map((id) => document.getElementById(id)).filter(Boolean);
+    return names.some((name) => /^(more|更多)$/i.test(name)) &&
+      element.getAttribute('aria-expanded') === 'false' &&
+      targets.some((target) => root.contains(target) && !sourceArea(target) &&
+        target.querySelector('p, li') && normalize(target.textContent).length >= 80);
+  });
 
-  let expanded = await tryExpand();
-
-  if (expanded) await page.waitForTimeout(1_000);
-
-  const readOverview = () => page.evaluate((expectedLabels) => {
-      const normalize = (value) => value?.replace(/\s+/g, ' ').trim() || '';
-      const isLabel = (text) => expectedLabels.some((label) =>
-        text === label || (text.startsWith(`${label} `) && text.length < label.length + 40)
-      );
-      const isVisible = (element) => {
-        const style = window.getComputedStyle(element);
-        const box = element.getBoundingClientRect();
-        return style.display !== 'none' && style.visibility !== 'hidden' && box.height > 0;
-      };
-
-      const elements = Array.from(
-        document.querySelectorAll('h1, h2, h3, [role="heading"], div, span')
-      );
-      const label = elements.find((element) =>
-        isVisible(element) && isLabel(normalize(element.textContent))
-      );
-      if (!label) return null;
-
-      // Pick the smallest visible ancestor that contains a useful amount of
-      // generated text. Avoid climbing as far as Google's complete result list.
-      let container = label;
-      let best = null;
-      for (let level = 0; container && level < 10; level += 1) {
-        const text = normalize(container.innerText);
-        const organicHeadings = container.querySelectorAll('h3').length;
-        if (
-          isVisible(container) &&
-          text.length >= 120 &&
-          text.length <= 15_000 &&
-          organicHeadings <= 3
-        ) {
-          best = container;
-          if (container.querySelectorAll('a[href]').length > 0) break;
-        }
-        if (container.id === 'search') break;
-        container = container.parentElement;
-      }
-      if (!best) return null;
-
-      const sourceLinks = Array.from(best.querySelectorAll('a[href]')).map((link) => ({
-        title: normalize(link.getAttribute('aria-label')) || normalize(link.innerText),
-        url: link.href,
-      }));
-
-      return {
-        text: normalize(best.innerText),
-        sources: sourceLinks,
-      };
-    }, labels);
-
-  // AI Overview text is streamed after the normal result page is ready. Keep
-  // sampling until the text is unchanged for three reads (about two seconds).
-  let overview = null;
-  let previousText = '';
-  let stableReads = 0;
-  while (Date.now() < deadline) {
-    const current = await readOverview();
-    if (current) {
-      if (!expanded) {
-        expanded = await tryExpand();
-        if (expanded) {
-          previousText = '';
-          stableReads = 0;
-          await page.waitForTimeout(1_000);
-          continue;
-        }
-      }
-
-      overview = current;
-      if (current.text === previousText) {
-        stableReads += 1;
-        if (stableReads >= 2) break;
-      } else {
-        previousText = current.text;
-        stableReads = 0;
+  let clipped = false;
+  const textParts = [];
+  const visit = (element) => {
+    const style = getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' ||
+        element.getAttribute('aria-hidden') === 'true' ||
+        element.matches(`script, style, noscript, nav, aside, ${controlSelector}`) ||
+        element === label || sourceArea(element)) return;
+    if (visible(element) && element.clientHeight > 0 &&
+        element.scrollHeight > element.clientHeight + 2 &&
+        (['hidden', 'clip'].includes(style.overflowY) || Number(style.webkitLineClamp) > 0)) clipped = true;
+    const block = !['inline', 'contents'].includes(style.display);
+    if (block) textParts.push('\n');
+    for (const child of element.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) textParts.push(child.textContent);
+      else if (child.nodeType === Node.ELEMENT_NODE) {
+        if (child.tagName === 'BR') textParts.push('\n');
+        else visit(child);
       }
     }
-    await page.waitForTimeout(1_000);
-  }
+    if (block) textParts.push('\n');
+  };
+  visit(passage);
+  const text = textParts.join('').split('\n').map(normalize).filter(Boolean).join('\n');
+  return {
+    text,
+    sources: Array.from(sourceRoot.querySelectorAll('a[href]')).map((link) => ({
+      title: normalize(link.getAttribute('aria-label')) || normalize(link.innerText),
+      url: link.href,
+    })),
+    expandIndex: expandButton ? allControls.indexOf(expandButton) : -1,
+    height: passage.getBoundingClientRect().height,
+    clipped,
+    busy: passage.getAttribute('aria-busy') === 'true' ||
+      Array.from(passage.querySelectorAll('[aria-busy="true"], [role="progressbar"]')).some(visible) ||
+      passage.closest('[data-scope-id="turn"]')?.getAttribute('data-complete') === 'false',
+  };
+}
 
+async function extractGoogleAiOverview(page, maxWaitMs) {
+  const labels = ['AI Overview', 'AI overview', 'AI 摘要', 'AI 概覽', 'AI 生成的摘要', 'AI 產生的摘要'];
+  if (maxWaitMs === 0) return null;
+  const deadline = Date.now() + maxWaitMs;
+  let overview = null;
+  let previousText = '';
+  let unchangedSince = Date.now();
+  let firstSeen = null;
+  let lastClick = 0;
+  let clickAttempts = 0;
+  let awaitingExpansion = null;
+  let settled = false;
+  let latest;
+  while (Date.now() < deadline) {
+    const current = await page.evaluate(inspectGoogleOverview, labels);
+    latest = current;
+    const now = Date.now();
+    if (current) {
+      firstSeen ??= now;
+      if (current.text) overview = { text: current.text, sources: current.sources };
+      if (current.text !== previousText) {
+        previousText = current.text;
+        unchangedSince = now;
+      }
+      if (awaitingExpansion && !current.clipped &&
+          (current.text.length > awaitingExpansion.textLength ||
+           current.height > awaitingExpansion.height + 2)) {
+        awaitingExpansion = null;
+      }
+      if (current.expandIndex >= 0) {
+        // Clicking is only an attempt. A remaining control prevents settling.
+        unchangedSince = now;
+        if (clickAttempts < 3 && now - lastClick >= 2000) {
+          lastClick = now;
+          clickAttempts += 1;
+          awaitingExpansion ??= { textLength: current.text.length, height: current.height };
+          await page.locator('button, [role="button"], a[aria-expanded], [tabindex][aria-expanded]')
+            .nth(current.expandIndex).click({ timeout: Math.max(1, Math.min(1000, deadline - now)) })
+            .catch(() => {}); // The next poll checks whether expansion actually happened.
+        }
+      } else if (current.busy || current.clipped || awaitingExpansion) {
+        unchangedSince = now;
+      } else if (current.text && now - unchangedSince >= 3000 && now - firstSeen >= 5000) {
+        settled = true;
+        break;
+      }
+    } else {
+      unchangedSince = now;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await page.waitForTimeout(Math.min(500, remaining));
+  }
   if (!overview) return null;
+  overview.extractionStatus = settled ? 'settled' : 'possibly_incomplete';
+  if (!settled) {
+    overview.incompleteReason = latest?.expandIndex >= 0 || awaitingExpansion ? 'expansion_pending'
+      : latest?.busy ? 'content_loading' : latest?.clipped ? 'content_clipped' : 'timeout';
+  }
 
   const seen = new Set();
   overview.sources = overview.sources
@@ -415,6 +428,9 @@ function printResults(engineLabel, category, query, results, aiOverview) {
       console.log('  此次搜尋沒有回傳 AI Overview');
     } else {
       console.log(`  ${aiOverview.text}`);
+      if (aiOverview.extractionStatus === 'possibly_incomplete') {
+        console.log(`  摘要可能不完整：${aiOverview.incompleteReason}`);
+      }
       if (aiOverview.sources.length > 0) {
         console.log('  AI Overview 引用來源：');
         aiOverview.sources.forEach(({ title, url }, index) => {
@@ -611,4 +627,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, buildFinancialQueries, runForecast, main };
+module.exports = { parseArgs, buildFinancialQueries, runForecast, main, extractGoogleAiOverview };

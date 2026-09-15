@@ -70,6 +70,20 @@ Each search contains:
 - `aiOverviewStatus`: `available`, `unavailable`, `disabled`, or `not_applicable`.
 - `error`: `{ "code": "...", "message": "..." }`, or `null`.
 
+When `aiOverview` is present, it also includes `extractionStatus`:
+
+- `settled`: no recognized collapsed control, clipping, or loading indicator
+  remained, and the passage stopped changing during the observation period.
+- `possibly_incomplete`: the wait expired before those checks passed.
+  `incompleteReason` identifies `expansion_pending`, `content_loading`,
+  `content_clipped`, or `timeout`. The text obtained so far is still returned.
+
+The extractor recognizes `顯示全部` and other expansion labels, checks for added
+text or increased passage height after clicking, and excludes interface controls
+from the text. Paragraph breaks are preserved. `settled` is a DOM observation,
+not a guarantee that Google supplied its entire response; extraction still
+depends on recognizing the page structure.
+
 An unavailable AI Overview does not fail an otherwise successful search.
 `unavailable` means no overview was obtained; it may not have appeared, loaded
 in time, or matched the extraction logic. Google verification in headless mode
@@ -109,3 +123,6 @@ npm test
 
 Tests use a fake browser to check defaults, year rollover, partial failures,
 verification handling, timeouts, cleanup, and the CLI output contract.
+AI Overview regression tests also launch installed Chrome with local HTML
+fixtures to check expansion, streaming, clipping, and incomplete-result reporting.
+They do not contact Google. Chrome must be installed to run the full test suite.
