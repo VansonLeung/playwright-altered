@@ -114,23 +114,23 @@ function buildFinancialQueries({ sector, market, horizon }) {
   return [
     {
       category: '政策與補貼（潛在優勢）',
-      query: `${scope} (產業政策 OR 補貼 OR 扶持 OR 發展規劃 OR 法案 OR subsidies OR "sector winners")`,
+      query: `請簡單說明： ${scope} (產業政策 OR 補貼 OR 扶持 OR 發展規劃 OR 法案 OR subsidies OR "sector winners")`,
     },
     {
       category: '資金流向（機構取態）',
-      query: `${scope} (資金流向 OR 融資 OR "fund flows" OR "13F filing" OR "new positions" OR "capital expenditure")`,
+      query: `請簡單說明： ${scope} (資金流向 OR 融資 OR "fund flows" OR "13F filing" OR "new positions" OR "capital expenditure")`,
     },
     {
       category: '技術與替代效應（增長或顛覆）',
-      query: `${scope} (技術突破 OR 商業化 OR "technology adoption" OR disruption OR "AI replacement") (CAGR OR forecast OR 市場規模)`,
+      query: `請簡單說明： ${scope} (技術突破 OR 商業化 OR "technology adoption" OR disruption OR "AI replacement") (CAGR OR forecast OR 市場規模)`,
     },
     {
       category: '產業數據與專業研報',
-      query: `${scope} ("industry outlook" OR 產業展望 OR 產業趨勢) (CAGR OR revenue OR margin OR 利潤率)`,
+      query: `請簡單說明： ${scope} ("industry outlook" OR 產業展望 OR 產業趨勢) (CAGR OR revenue OR margin OR 利潤率)`,
     },
     {
       category: '下行風險（潛在劣勢）',
-      query: `${scope} (overcapacity OR "declining margin" OR "job cuts" OR restructuring OR 產能過剩 OR 毛利率下滑 OR 裁員 OR 淘汰)`,
+      query: `請簡單說明： ${scope} (overcapacity OR "declining margin" OR "job cuts" OR restructuring OR 產能過剩 OR 毛利率下滑 OR 裁員 OR 淘汰)`,
     },
   ];
 }
