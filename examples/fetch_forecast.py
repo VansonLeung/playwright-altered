@@ -12,7 +12,7 @@ def fetch_forecast(*extra_args, executable=None):
     )
     try:
         completed = subprocess.run(
-            [command, *extra_args, "--format", "json", "--headless", "--timeout", "360000"],
+            [command, *extra_args, "--format", "json", "--headed", "--timeout", "360000"],
             capture_output=True,
             text=True,
             encoding="utf-8",
